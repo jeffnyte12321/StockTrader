@@ -1,0 +1,73 @@
+{
+  "cash": 0.088799999999992,
+  "positions": {
+    "ORCL": {
+      "symbol": "ORCL",
+      "quantity": 17.07,
+      "avg_cost": 146.38
+    },
+    "MRVL": {
+      "symbol": "MRVL",
+      "quantity": 7.0,
+      "avg_cost": 107.11
+    },
+    "AMZN": {
+      "symbol": "AMZN",
+      "quantity": 8.04,
+      "avg_cost": 209.77
+    },
+    "TSLA": {
+      "symbol": "TSLA",
+      "quantity": 7.02,
+      "avg_cost": 360.59
+    },
+    "DAL": {
+      "symbol": "DAL",
+      "quantity": 37.95,
+      "avg_cost": 66.76
+    }
+  },
+  "trades": [
+    {
+      "id": "cd34b790",
+      "symbol": "ORCL",
+      "action": "buy",
+      "quantity": 17.07,
+      "price": 146.38,
+      "timestamp": 1775445404.8184867
+    },
+    {
+      "id": "ce651151",
+      "symbol": "MRVL",
+      "action": "buy",
+      "quantity": 7.0,
+      "price": 107.11,
+      "timestamp": 1775445412.3261993
+    },
+    {
+      "id": "b21e9394",
+      "symbol": "AMZN",
+      "action": "buy",
+      "quantity": 8.04,
+      "price": 209.77,
+      "timestamp": 1775445424.6461096
+    },
+    {
+      "id": "0899847b",
+      "symbol": "TSLA",
+      "action": "buy",
+      "quantity": 7.02,
+      "price": 360.59,
+      "timestamp": 1775445443.9458141
+    },
+    {
+      "id": "7c56f1c4",
+      "symbol": "DAL",
+      "action": "buy",
+      "quantity": 37.95,
+      "price": 66.76,
+      "timestamp": 1775445454.4042268
+    }
+  ],
+  "alerts": {}
+}
