@@ -12,3 +12,36 @@ services:
         sync: false
       - key: SUPABASE_ANON_KEY
         sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SNAPTRADE_CLIENT_ID
+        sync: false
+      - key: SNAPTRADE_CONSUMER_KEY
+        sync: false
+      - key: SNAPTRADE_REDIRECT_URI
+        sync: false
+      - key: ALPHAVANTAGE_API_KEY
+        sync: false
+      - key: STOOQ_API_KEY
+        sync: false
+      - key: INTERNAL_SNAPSHOT_TOKEN
+        sync: false
+      - key: NORTHSTAR_BASE_URL
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+  - type: cron
+    name: northstar-daily-snapshot
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: >-
+      python -c "import os, requests; base=os.environ['NORTHSTAR_BASE_URL'].rstrip('/'); token=os.environ['INTERNAL_SNAPSHOT_TOKEN']; r=requests.post(base + '/api/internal/snapshot', headers={'Authorization': 'Bearer ' + token}, timeout=180); print(r.status_code, r.text); r.raise_for_status()"
+    schedule: "30 21 * * 1-5"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.4
+      - key: NORTHSTAR_BASE_URL
+        sync: false
+      - key: INTERNAL_SNAPSHOT_TOKEN
+        sync: false
