@@ -81,6 +81,44 @@ def _stooq_symbol(symbol: str) -> str:
     return f"{symbol.strip().lower()}.us"
 
 
+YAHOO_CRYPTO_SYMBOLS = {
+    "AAVE",
+    "ADA",
+    "ALGO",
+    "ATOM",
+    "AVAX",
+    "BCH",
+    "BTC",
+    "DOGE",
+    "DOT",
+    "ETC",
+    "ETH",
+    "FIL",
+    "HBAR",
+    "ICP",
+    "LINK",
+    "LTC",
+    "MATIC",
+    "NEAR",
+    "POL",
+    "SHIB",
+    "SOL",
+    "UNI",
+    "USDC",
+    "USDT",
+    "XLM",
+    "XMR",
+    "XRP",
+}
+
+
+def _yahoo_symbol(symbol: str) -> str:
+    normalized = symbol.strip().upper()
+    if normalized in YAHOO_CRYPTO_SYMBOLS:
+        return f"{normalized}-USD"
+    return normalized
+
+
 def _finite_float(value) -> Optional[float]:
     try:
         number = float(value)
@@ -237,8 +275,9 @@ def get_ticker_info(symbol: str) -> dict:
     if alpha_vantage:
         return alpha_vantage
 
+    yahoo_symbol = _yahoo_symbol(symbol)
     try:
-        tk = yf.Ticker(symbol)
+        tk = yf.Ticker(yahoo_symbol)
         hist = tk.history(period="5d", interval="1d")
         if hist.empty:
             raise ValueError("No data returned")
@@ -496,9 +535,12 @@ def _download_price_history_rows(symbols: list[str], start_date: datetime.date, 
 
     end_exclusive = end_date + datetime.timedelta(days=1)
     rows = []
+    yahoo_by_symbol = {symbol: _yahoo_symbol(symbol) for symbol in symbols}
+    original_by_yahoo = {yahoo: original for original, yahoo in yahoo_by_symbol.items()}
+    yahoo_symbols = sorted(set(yahoo_by_symbol.values()))
     try:
         data = yf.download(
-            tickers=symbols,
+            tickers=yahoo_symbols,
             start=start_date.isoformat(),
             end=end_exclusive.isoformat(),
             interval="1d",
@@ -531,13 +573,14 @@ def _download_price_history_rows(symbols: list[str], start_date: datetime.date, 
 
     if not data.empty:
         if isinstance(data.columns, pd.MultiIndex):
-            for symbol in symbols:
+            for yahoo_symbol in yahoo_symbols:
                 try:
-                    closes = data[symbol]["Close"]
+                    closes = data[yahoo_symbol]["Close"]
                 except KeyError:
                     continue
+                symbol = original_by_yahoo.get(yahoo_symbol, yahoo_symbol)
                 append_series(symbol, closes, "yfinance")
-        elif len(symbols) == 1 and "Close" in data.columns:
+        elif len(yahoo_symbols) == 1 and "Close" in data.columns:
             append_series(symbols[0], data["Close"], "yfinance")
 
     covered = {row["symbol"] for row in rows}
@@ -594,10 +637,12 @@ def _get_cached_price_history(
     if missing_symbols:
         fetched = _download_price_history_rows(missing_symbols, start_date, end_date)
         if fetched:
-            try:
-                db.upsert_price_history_rows(fetched, use_service_role=use_service_role, token=token)
-            except Exception as exc:
-                print(f"[price-history] database upsert failed: {exc}")
+            cache_with_service_role = use_service_role or bool(db.SUPABASE_SERVICE_ROLE_KEY)
+            if cache_with_service_role:
+                try:
+                    db.upsert_price_history_rows(fetched, use_service_role=True)
+                except Exception as exc:
+                    print(f"[price-history] database upsert failed: {exc}")
             grouped = _price_rows_by_symbol(rows + fetched)
     return grouped
 
@@ -1284,8 +1329,9 @@ def get_history(symbol: str, period: str = "1mo", interval: str = "1d"):
         if alpha_records:
             return {"symbol": symbol, "period": period, "interval": "1d", "data": alpha_records, "source": "alpha_vantage"}
 
+    yahoo_symbol = _yahoo_symbol(symbol)
     try:
-        tk = yf.Ticker(symbol)
+        tk = yf.Ticker(yahoo_symbol)
         hist = tk.history(period=period, interval=interval)
         if hist.empty:
             stooq_records = get_history_stooq_records(symbol, period)
@@ -1325,7 +1371,7 @@ def get_history(symbol: str, period: str = "1mo", interval: str = "1d"):
             })
         if not records:
             raise HTTPException(status_code=404, detail=f"No usable data for {symbol}")
-        return {"symbol": symbol, "period": period, "interval": interval, "data": records}
+        return {"symbol": symbol, "period": period, "interval": interval, "data": records, "source": "yfinance"}
     except HTTPException:
         raise
     except Exception:
@@ -1988,7 +2034,7 @@ def compute_macd(closes: pd.Series):
 
 def analyze_stock(symbol: str) -> dict:
     try:
-        tk = yf.Ticker(symbol)
+        tk = yf.Ticker(_yahoo_symbol(symbol))
         hist = tk.history(period="3mo", interval="1d")
         if hist.empty or len(hist) < 30:
             return None

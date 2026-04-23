@@ -51,6 +51,11 @@ class ApiSmokeTests(unittest.TestCase):
         ):
             self.assertNotIn(token, source)
 
+    def test_crypto_symbols_use_yahoo_usd_pair_for_market_data(self):
+        self.assertEqual(main._yahoo_symbol("AVAX"), "AVAX-USD")
+        self.assertEqual(main._yahoo_symbol("xlm"), "XLM-USD")
+        self.assertEqual(main._yahoo_symbol("AAPL"), "AAPL")
+
 
 if __name__ == "__main__":
     unittest.main()
