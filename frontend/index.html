@@ -1934,20 +1934,12 @@
     .tile-portfolio {
       grid-column: span 7;
       min-height: 278px;
-      color: #ffffff;
-      background: linear-gradient(135deg, var(--ns-blue-700) 0%, var(--ns-blue-600) 100%);
+      color: var(--ns-gray-900);
+      background: var(--ns-surface);
+      border: 1px solid rgba(0,0,0,0.04);
+      box-shadow: var(--ns-shadow);
       position: relative;
       overflow: hidden;
-    }
-    .tile-portfolio::after {
-      content: "";
-      position: absolute;
-      right: -50px;
-      top: -50px;
-      width: 220px;
-      height: 220px;
-      border-radius: 50%;
-      background: rgba(255,255,255,0.08);
     }
     .portfolio-value {
       position: relative;
@@ -1963,7 +1955,7 @@
       position: relative;
       z-index: 1;
       margin-top: 10px;
-      color: rgba(255,255,255,0.72);
+      color: var(--ns-gray-500);
       font-size: 14px;
       font-weight: 500;
     }
@@ -1976,8 +1968,8 @@
       margin-top: 18px;
       padding: 7px 12px;
       border-radius: 20px;
-      background: rgba(255,255,255,0.16);
-      color: #ffffff;
+      background: var(--ns-gray-100);
+      color: var(--ns-gray-900);
       font-size: 15px;
       font-weight: 600;
     }
@@ -1992,15 +1984,6 @@
     }
     .portfolio-chart-wrap canvas {
       display: block;
-    }
-    .portfolio-chart-note {
-      position: absolute;
-      right: 22px;
-      bottom: 124px;
-      z-index: 1;
-      color: rgba(255,255,255,0.64);
-      font-size: 11px;
-      font-weight: 600;
     }
     .portfolio-chart {
       position: absolute;
@@ -2346,7 +2329,7 @@
       font-variant-numeric: tabular-nums;
     }
     .pnl-label {
-      color: rgba(255,255,255,0.6);
+      color: var(--ns-gray-500);
       font-size: 13px;
     }
     .mini-chart {
@@ -2400,9 +2383,9 @@
       flex-wrap: wrap;
     }
     .chart-range-btn {
-      background: rgba(255,255,255,0.08);
-      border: 1px solid rgba(255,255,255,0.12);
-      color: rgba(255,255,255,0.72);
+      background: var(--ns-gray-100);
+      border: 1px solid var(--ns-gray-200);
+      color: var(--ns-gray-500);
       font-size: 12px;
       font-weight: 600;
       padding: 5px 11px;
@@ -2412,13 +2395,13 @@
       transition: background 0.15s, color 0.15s, border-color 0.15s;
     }
     .chart-range-btn:hover {
-      color: #ffffff;
-      background: rgba(255,255,255,0.14);
+      color: var(--ns-gray-900);
+      background: var(--ns-gray-200);
     }
     .chart-range-btn.active {
-      background: rgba(255,255,255,0.96);
-      color: #0b1220;
-      border-color: rgba(255,255,255,0.96);
+      background: var(--ns-blue-600);
+      color: #ffffff;
+      border-color: var(--ns-blue-600);
     }
 
     .summary-card {
@@ -3315,7 +3298,7 @@ function buildSmoothChartPath(points) {
   return d;
 }
 
-function PortfolioTrendChart({ points, positive = true, range = "1M", costBasis = null, benchmarkPoints = [], benchmarkLabel = "" }) {
+function PortfolioTrendChart({ points, positive = true, range = "1M", benchmarkPoints = [], benchmarkLabel = "" }) {
   const svgRef = useRef(null);
   const [hover, setHover] = useState(null);
   const data = (points || [])
@@ -3341,8 +3324,7 @@ function PortfolioTrendChart({ points, positive = true, range = "1M", costBasis 
   const startValue = data[0].value;
   const values = data.map((point) => point.value);
   const benchmarkValues = benchmarkData.map((point) => point.value);
-  const cost = Number(costBasis);
-  const scaleValues = Number.isFinite(cost) && cost > 0 ? [...values, ...benchmarkValues, startValue, cost] : [...values, ...benchmarkValues, startValue];
+  const scaleValues = [...values, ...benchmarkValues, startValue];
   const rawMin = Math.min(...scaleValues);
   const rawMax = Math.max(...scaleValues);
   const span = rawMax - rawMin;
@@ -3351,8 +3333,8 @@ function PortfolioTrendChart({ points, positive = true, range = "1M", costBasis 
   const maxV = rawMax + yPad;
   const scaleRange = Math.max(maxV - minV, 1);
   const lineColor = positive ? "#22c55e" : "#ef4444";
-  const mutedLine = "rgba(255,255,255,0.24)";
-  const tickText = "rgba(255,255,255,0.62)";
+  const mutedLine = "rgba(0,0,0,0.1)";
+  const tickText = "rgba(0,0,0,0.5)";
   const gradientId = `portfolioArea-${range}`;
   const clipId = `portfolioClip-${range}`;
 
@@ -3377,7 +3359,6 @@ function PortfolioTrendChart({ points, positive = true, range = "1M", costBasis 
     ? Array.from({ length: xTickCount }, (_, index) => Math.round((index / (xTickCount - 1)) * (data.length - 1)))
     : [];
   const baselineY = yForValue(startValue);
-  const costY = Number.isFinite(cost) && cost > 0 ? yForValue(cost) : null;
 
   const dateLabel = (ms) => new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric" });
   const fullDateLabel = (ms) => new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -3448,15 +3429,6 @@ function PortfolioTrendChart({ points, positive = true, range = "1M", costBasis 
         })}
 
         <line x1={pad.left} y1={baselineY} x2={pad.left + chartW} y2={baselineY} stroke="rgba(255,255,255,0.38)" strokeWidth="1" strokeDasharray="4 5" />
-        {costY !== null && (
-          <g>
-            <line x1={pad.left} y1={costY} x2={pad.left + chartW} y2={costY} stroke="rgba(250,204,21,0.62)" strokeWidth="1" strokeDasharray="6 5" />
-            <text x={pad.left + 4} y={Math.max(pad.top + 11, costY - 5)} fontSize="10" fill="rgba(250,204,21,0.9)" fontFamily="DM Sans, sans-serif" fontWeight="700">
-              Cost basis
-            </text>
-          </g>
-        )}
-
         <g clipPath={`url(#${clipId})`}>
           <path d={areaPath} fill={`url(#${gradientId})`} />
           {benchmarkPath && (
@@ -3498,7 +3470,6 @@ function Dashboard({ toast, onNavigate, onOpenPosition, viewMode = "simple" }) {
   const [portfolio, setPortfolio] = useState(null);
   const [equityCurve, setEquityCurve] = useState([]);
   const [benchmarkCurve, setBenchmarkCurve] = useState([]);
-  const [curveSource, setCurveSource] = useState("");
   const [benchmark, setBenchmark] = useState("SPY");
   const [chartRange, setChartRange] = useState("1M");
   const [chartLoading, setChartLoading] = useState(false);
@@ -3529,11 +3500,9 @@ function Dashboard({ toast, onNavigate, onOpenPosition, viewMode = "simple" }) {
       setBenchmarkCurve((data.benchmark?.points || [])
         .filter((point) => Number.isFinite(Number(point.time)) && Number.isFinite(Number(point.value)))
         .sort((a, b) => Number(a.time) - Number(b.time)));
-      setCurveSource(data.source || "");
     } catch (_) {
       setEquityCurve([]);
       setBenchmarkCurve([]);
-      setCurveSource("");
     } finally {
       setChartLoading(false);
     }
@@ -3576,16 +3545,6 @@ function Dashboard({ toast, onNavigate, onOpenPosition, viewMode = "simple" }) {
   const rangeEndValue = trendPoints.length ? trendPoints[trendPoints.length - 1].value : 0;
   const rangeDelta = rangeEndValue - rangeStartValue;
   const rangeDeltaPct = rangeStartValue ? (rangeDelta / rangeStartValue) * 100 : 0;
-  const costBasisTotal = holdings.reduce((sum, h) => {
-    const q = Number(h.quantity || 0);
-    const ac = Number(h.avg_cost || 0);
-    const reportedCostBasis = Number(h.cost_basis || 0);
-    return sum + (reportedCostBasis || (q && ac ? q * ac : 0));
-  }, 0) + cash;
-  const costBasis = costBasisTotal > 0 ? costBasisTotal : null;
-  const trendNote = hasTrend
-    ? `${trendPoints.length} historical points${curveSource ? ` · ${curveSource}` : ""}${benchmarkPoints.length ? ` · ${benchmark} overlay` : ""}`
-    : "No historical snapshot or transaction data yet";
   const twrLabel = portfolio.twr_pct === null || portfolio.twr_pct === undefined ? "N/A" : fmtPct(Number(portfolio.twr_pct || 0));
   const irrLabel = portfolio.irr_pct === null || portfolio.irr_pct === undefined ? "N/A" : fmtPct(Number(portfolio.irr_pct || 0));
   const now = new Date();
@@ -3625,7 +3584,7 @@ function Dashboard({ toast, onNavigate, onOpenPosition, viewMode = "simple" }) {
       <div className="bento">
         {/* Portfolio hero */}
         <section className="tile tile-portfolio" role="region" aria-label="Portfolio overview">
-          <div className="tile-label" style={{ color: "rgba(255,255,255,0.65)" }}>Total portfolio value</div>
+          <div className="tile-label">Total portfolio value</div>
           <div className="portfolio-value" aria-label={fmt$(totalValue)}>{fmt$(totalValue)}</div>
           <div className="portfolio-pnl-row">
             <span className="pnl-badge">
@@ -3635,11 +3594,11 @@ function Dashboard({ toast, onNavigate, onOpenPosition, viewMode = "simple" }) {
             </span>
             <span className="pnl-label">unrealized</span>
           </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8, color: "rgba(255,255,255,0.68)", fontSize: 12, fontWeight: 700 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8, color: "var(--ns-gray-500)", fontSize: 12, fontWeight: 700 }}>
             <span>TWR {twrLabel}</span>
-            <span style={{ opacity: 0.35 }}>·</span>
+            <span style={{ opacity: 0.45 }}>·</span>
             <span>IRR {irrLabel}</span>
-            <span style={{ opacity: 0.35 }}>·</span>
+            <span style={{ opacity: 0.45 }}>·</span>
             <span>{portfolio.returns_range || chartRange}</span>
           </div>
           <div className="chart-range-row" role="tablist" aria-label="Chart range">
@@ -3679,17 +3638,16 @@ function Dashboard({ toast, onNavigate, onOpenPosition, viewMode = "simple" }) {
               <span aria-hidden="true">{rangeDelta >= 0 ? "▲" : "▼"}</span>
               <span className="tabular">{rangeDelta >= 0 ? "+" : "-"}{fmt$(Math.abs(rangeDelta))}</span>
               <span style={{ opacity: 0.85 }}>({rangeDelta >= 0 ? "+" : ""}{rangeDeltaPct.toFixed(2)}%)</span>
-              <span style={{ color: "rgba(255,255,255,0.5)", fontWeight: 500 }}>· {chartRange}</span>
+              <span style={{ color: "var(--ns-gray-400)", fontWeight: 500 }}>· {chartRange}</span>
             </span>}
           </div>
           <div className="mini-chart" aria-label={`Portfolio value over ${chartRange}`}>
             {chartLoading && equityCurve.length === 0
-              ? <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "rgba(255,255,255,0.6)", fontSize: 13 }}>Loading…</div>
+              ? <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--ns-gray-500)", fontSize: 13 }}>Loading…</div>
               : hasTrend
-                ? <PortfolioTrendChart points={trendPoints} positive={chartPositive} range={chartRange} costBasis={costBasis} benchmarkPoints={benchmarkPoints} benchmarkLabel={benchmark} />
-                : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "rgba(255,255,255,0.65)", fontSize: 13, textAlign: "center" }}>No historical transaction or snapshot data yet</div>}
+                ? <PortfolioTrendChart points={trendPoints} positive={chartPositive} range={chartRange} benchmarkPoints={benchmarkPoints} benchmarkLabel={benchmark} />
+                : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--ns-gray-500)", fontSize: 13, textAlign: "center" }}>No historical transaction or snapshot data yet</div>}
           </div>
-          <div className="portfolio-chart-note" style={{ marginTop: 4, color: "rgba(255,255,255,0.55)", fontSize: 11 }}>{trendNote}</div>
         </section>
 
         {/* Summary cards */}
