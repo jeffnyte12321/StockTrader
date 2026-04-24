@@ -1,6 +1,7 @@
 import pathlib
 import unittest
 from unittest.mock import patch
+import os
 
 from fastapi.testclient import TestClient
 
@@ -105,6 +106,16 @@ class ApiSmokeTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         create_link.assert_called_once()
+        self.assertEqual(create_link.call_args.kwargs["custom_redirect"], "http://testserver/")
+
+    def test_brokerage_connect_ignores_bad_env_redirect_when_request_origin_exists(self):
+        with patch.dict(os.environ, {"NORTHSTAR_BASE_URL": "https://placeholder.onrender.com"}, clear=False), \
+             patch.object(main, "require_auth", return_value=("token", "user-1")), \
+             patch.object(main, "_get_snaptrade_credentials", return_value=("snap-user", "snap-secret", {})), \
+             patch.object(main.snaptrade, "create_connection_portal_link", return_value={"redirectURI": "https://app.snaptrade.com/demo"}) as create_link:
+            response = self.client.post("/api/brokerage/connect", json={"immediate_redirect": True})
+
+        self.assertEqual(response.status_code, 200)
         self.assertEqual(create_link.call_args.kwargs["custom_redirect"], "http://testserver/")
 
 

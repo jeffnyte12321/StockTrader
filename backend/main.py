@@ -71,10 +71,13 @@ def _normalize_redirect_base(value: str) -> Optional[str]:
 
 
 def _default_snaptrade_redirect(request: Request) -> str:
+    request_origin = _normalize_redirect_base(str(request.base_url))
+    if request_origin:
+        return request_origin
     configured = _normalize_redirect_base(os.getenv("NORTHSTAR_BASE_URL", ""))
     if configured:
         return configured
-    return _normalize_redirect_base(str(request.base_url)) or "http://localhost:8000/"
+    return "http://localhost:8000/"
 
 
 app = FastAPI(title="StockApp API")
