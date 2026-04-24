@@ -1,5 +1,6 @@
 import pathlib
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -95,6 +96,16 @@ class ApiSmokeTests(unittest.TestCase):
         ):
             with self.subTest(path=str(relative_path)):
                 self.assertNotIn("print(", relative_path.read_text())
+
+    def test_brokerage_connect_defaults_redirect_to_request_origin(self):
+        with patch.object(main, "require_auth", return_value=("token", "user-1")), \
+             patch.object(main, "_get_snaptrade_credentials", return_value=("snap-user", "snap-secret", {})), \
+             patch.object(main.snaptrade, "create_connection_portal_link", return_value={"redirectURI": "https://app.snaptrade.com/demo"}) as create_link:
+            response = self.client.post("/api/brokerage/connect", json={"immediate_redirect": True})
+
+        self.assertEqual(response.status_code, 200)
+        create_link.assert_called_once()
+        self.assertEqual(create_link.call_args.kwargs["custom_redirect"], "http://testserver/")
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ import logging
 import math
 from typing import Optional
 import uuid
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -61,6 +61,20 @@ def _allowed_origins() -> list[str]:
             if origin:
                 origins.add(origin)
     return sorted(origins)
+
+
+def _normalize_redirect_base(value: str) -> Optional[str]:
+    normalized = (value or "").strip()
+    if not normalized:
+        return None
+    return normalized.rstrip("/") + "/"
+
+
+def _default_snaptrade_redirect(request: Request) -> str:
+    configured = _normalize_redirect_base(os.getenv("NORTHSTAR_BASE_URL", ""))
+    if configured:
+        return configured
+    return _normalize_redirect_base(str(request.base_url)) or "http://localhost:8000/"
 
 
 app = FastAPI(title="StockApp API")
@@ -1718,15 +1732,20 @@ def list_brokerages(authorization: Optional[str] = Header(None)):
 
 
 @app.post("/api/brokerage/connect")
-def create_brokerage_connection(req: BrokerageConnectRequest, authorization: Optional[str] = Header(None)):
+def create_brokerage_connection(
+    req: BrokerageConnectRequest,
+    request: Request,
+    authorization: Optional[str] = Header(None),
+):
     token, user_id = require_auth(authorization)
     snaptrade_user_id, snaptrade_user_secret, _ = _get_snaptrade_credentials(token, user_id)
+    custom_redirect = _normalize_redirect_base(req.custom_redirect or "") or _default_snaptrade_redirect(request)
     try:
         payload = snaptrade.create_connection_portal_link(
             user_id=snaptrade_user_id,
             user_secret=snaptrade_user_secret,
             broker=req.broker,
-            custom_redirect=req.custom_redirect,
+            custom_redirect=custom_redirect,
             reconnect=req.reconnect_authorization_id,
             immediate_redirect=req.immediate_redirect,
         )
