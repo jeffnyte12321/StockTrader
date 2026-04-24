@@ -10,6 +10,7 @@ import uuid
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import yfinance as yf
 import pandas as pd
@@ -2434,10 +2435,13 @@ def get_single_insight(symbol: str, authorization: Optional[str] = Header(None))
 # ─── Serve frontend ──────────────────────────────────────────────────────────
 
 frontend_dir = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend"))
+frontend_dist_dir = os.path.join(frontend_dir, "dist")
+
+app.mount("/static", StaticFiles(directory=frontend_dist_dir), name="frontend-static")
 
 @app.get("/")
 def serve_index():
-    return FileResponse(os.path.join(frontend_dir, "index.html"))
+    return FileResponse(os.path.join(frontend_dist_dir, "index.html"))
 
 
 if __name__ == "__main__":

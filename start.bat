@@ -1,6 +1,8 @@
 @echo off
 echo Installing dependencies...
 pip install -r backend/requirements.txt
+npm --prefix frontend install
+npm --prefix frontend run build
 
 echo.
 echo Starting StockApp server...

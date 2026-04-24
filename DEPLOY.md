@@ -6,6 +6,7 @@ This app is set up to deploy as one Python web service on Render.
 
 - `render.yaml` for Render service creation
 - `backend/main.py` reads `PORT` from the hosting environment
+- `frontend/src/main.jsx` and `frontend/src/styles.css` are bundled into `frontend/dist/app.js` and `frontend/dist/app.css`
 - `backend/supabase_db.py` reads `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` from environment variables
 - `backend/snaptrade_api.py` reads the SnapTrade credentials from environment variables
 - A Render cron service can hit `POST /api/internal/snapshot` after market close
@@ -17,7 +18,7 @@ This app is set up to deploy as one Python web service on Render.
 2. In Render, create a new Blueprint or Web Service from the repo.
 3. If using the `render.yaml` blueprint, Render will detect:
    - root directory: `backend`
-   - build command: `pip install -r requirements.txt`
+   - build command: `pip install -r requirements.txt && npm --prefix ../frontend ci && npm --prefix ../frontend run build`
    - start command: `python -m uvicorn main:app --host 0.0.0.0 --port $PORT`
 4. Set these environment variables in Render:
    - `SUPABASE_URL`
@@ -38,6 +39,8 @@ This app is set up to deploy as one Python web service on Render.
 ## Notes
 
 - The frontend is served by FastAPI, so one web service handles both the UI and API.
+- The checked-in `frontend/index.html` is a thin shell. The shipped React bundle lives in `frontend/dist/` and is built from `frontend/src/`.
+- For local frontend changes, run `npm --prefix frontend install` once, then `npm --prefix frontend run build` before starting the backend.
 - The app already uses relative `/api/...` calls, so no frontend API URL rewrite is needed.
 - Run the latest `supabase/schema.sql` before using the brokerage sync endpoints. The historical graph needs `price_history` and `transactions`.
 - The cron job in `render.yaml` is scheduled for `30 21 * * 1-5`; Render schedules cron in UTC, so this is 4:30pm ET during standard time and 5:30pm ET during daylight time.

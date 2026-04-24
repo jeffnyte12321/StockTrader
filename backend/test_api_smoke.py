@@ -45,11 +45,28 @@ class ApiSmokeTests(unittest.TestCase):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
         self.assertIn("Northstar", response.text)
+        self.assertIn('/static/app.js', response.text)
+        self.assertIn('/static/app.css', response.text)
+        for token in (
+            "@babel/standalone",
+            "react.production.min.js",
+            "react-dom.production.min.js",
+            "chart.umd.min.js",
+            'type="text/babel"',
+        ):
+            self.assertNotIn(token, response.text)
+
+    def test_frontend_static_assets_are_served(self):
+        for path in ("/static/app.js", "/static/app.css"):
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 200)
 
     def test_no_offline_demo_market_data_tokens_remain(self):
         source = "\n".join(
             [
                 (ROOT / "backend" / "main.py").read_text(),
+                (ROOT / "frontend" / "src" / "main.jsx").read_text(),
                 (ROOT / "frontend" / "index.html").read_text(),
                 (ROOT / "supabase" / "schema.sql").read_text(),
             ]
