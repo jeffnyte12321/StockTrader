@@ -10,8 +10,11 @@ const API = "/api";
 // ─── Auth helpers ───────────────────────────────────────────────────────────
 function getToken() { return localStorage.getItem("sb_token"); }
 function setToken(token) { localStorage.setItem("sb_token", token); }
+function getRefreshToken() { return localStorage.getItem("sb_refresh_token"); }
+function setRefreshToken(token) { localStorage.setItem("sb_refresh_token", token); }
 function clearToken() {
   localStorage.removeItem("sb_token");
+  localStorage.removeItem("sb_refresh_token");
   localStorage.removeItem("sb_user");
   localStorage.removeItem("pending_brokerage_sync");
 }
@@ -23,11 +26,49 @@ function authHeaders() {
   return token ? { "Authorization": `Bearer ${token}` } : {};
 }
 
-async function authFetch(url, opts = {}) {
+let refreshInFlight = null;
+
+async function refreshSession() {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return false;
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      const response = await fetch("/api/auth/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+      if (!response.ok) {
+        clearToken();
+        return false;
+      }
+      const data = await response.json();
+      if (!data.session?.access_token || !data.session?.refresh_token) {
+        clearToken();
+        return false;
+      }
+      setToken(data.session.access_token);
+      setRefreshToken(data.session.refresh_token);
+      if (data.user) setUser(data.user);
+      return true;
+    })().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
+async function authFetch(url, opts = {}, attemptRefresh = true) {
   const response = await fetch(url, {
     ...opts,
     headers: { ...opts.headers, ...authHeaders() },
   });
+  if (response.status === 401 && attemptRefresh) {
+    const refreshed = await refreshSession();
+    if (refreshed) {
+      return authFetch(url, opts, false);
+    }
+  }
   if (response.status === 401) {
     clearToken();
     window.dispatchEvent(new CustomEvent("auth-expired"));
@@ -58,6 +99,7 @@ function AuthPage({ onLogin, toast }) {
       if (!r.ok) throw new Error(d.detail || "Auth failed");
       if (d.session && d.session.access_token) {
         setToken(d.session.access_token);
+        setRefreshToken(d.session.refresh_token);
         setUser(d.user);
         toast(mode === "login" ? "Welcome back!" : "Account created!", "success");
         onLogin(d.user, d.session.access_token);
@@ -2464,12 +2506,12 @@ function App() {
   const [dashboardView, setDashboardView] = useState("simple");
   const [researchSymbol, setResearchSymbol] = useState("");
   const [portfolioSummary, setPortfolioSummary] = useState(null);
-  const [authed, setAuthed] = useState(!!getToken());
+  const [authed, setAuthed] = useState(!!(getToken() || getRefreshToken()));
   const [userEmail, setUserEmail] = useState(getUser()?.email || null);
   const { toasts, add: toast } = useToasts();
 
   const loadPortfolioSummary = useCallback(() => {
-    if (!getToken()) {
+    if (!getToken() && !getRefreshToken()) {
       setPortfolioSummary(null);
       return;
     }

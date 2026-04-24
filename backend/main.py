@@ -1588,6 +1588,10 @@ class AuthRequest(BaseModel):
     password: str
 
 
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
 class BrokerageConnectRequest(BaseModel):
     broker: Optional[str] = None
     custom_redirect: Optional[str] = None
@@ -1649,6 +1653,29 @@ def login(req: AuthRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=401, detail=str(e))
+
+
+@app.post("/api/auth/refresh")
+def refresh_auth(req: RefreshRequest):
+    refresh_token = (req.refresh_token or "").strip()
+    if not refresh_token:
+        raise HTTPException(status_code=400, detail="refresh_token is required")
+    try:
+        resp = db.supabase.auth.refresh_session(refresh_token)
+        if not resp.session or not resp.user:
+            raise HTTPException(status_code=401, detail="Session refresh failed")
+        db.ensure_profile(resp.session.access_token, str(resp.user.id))
+        return {
+            "user": {"id": str(resp.user.id), "email": resp.user.email},
+            "session": {
+                "access_token": resp.session.access_token,
+                "refresh_token": resp.session.refresh_token,
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
 @app.get("/api/auth/me")
