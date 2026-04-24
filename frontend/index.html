@@ -3929,7 +3929,7 @@ function ResearchPage({ toast, initialSymbol = "" }) {
     setChartSource("");
     try {
       const interval = p === "1d" ? "5m" : "1d";
-      const r = await fetch(`${API}/history/${encodeURIComponent(sym)}?period=${p}&interval=${interval}`);
+      const r = await authFetch(`${API}/history/${encodeURIComponent(sym)}?period=${p}&interval=${interval}`);
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.detail || "No chart data");
       if (requestId !== chartRequestRef.current) return;
@@ -3957,7 +3957,7 @@ function ResearchPage({ toast, initialSymbol = "" }) {
     setResearchError("");
     setChartError("");
     try {
-      const r = await fetch(`${API}/quote/${encodeURIComponent(sym)}`);
+      const r = await authFetch(`${API}/quote/${encodeURIComponent(sym)}`);
       const q = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(q.detail || `Could not load ${sym}`);
       if (requestId !== researchRequestRef.current) return;
@@ -4461,7 +4461,7 @@ function AlertsPage({ toast }) {
   const lookupPrice = useCallback(async (sym) => {
     if (!sym.trim()) { setCurrentPrice(null); return; }
     try {
-      const r = await fetch(`${API}/quote/${sym.trim().toUpperCase()}`);
+      const r = await authFetch(`${API}/quote/${sym.trim().toUpperCase()}`);
       if (r.ok) { const d = await r.json(); setCurrentPrice(d.price); }
       else { setCurrentPrice(null); }
     } catch (_) { setCurrentPrice(null); }
@@ -4612,7 +4612,7 @@ function InsightsPage({ toast }) {
       .filter(Boolean)
       .join(",");
     const url = cleanedSymbols ? `${API}/insights?symbols=${encodeURIComponent(cleanedSymbols)}` : `${API}/insights`;
-    fetch(url)
+    authFetch(url)
       .then(r => r.json())
       .then(setData)
       .catch(() => toast("Failed to load insights", "error"))

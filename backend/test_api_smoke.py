@@ -28,6 +28,19 @@ class ApiSmokeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["detail"], "Missing or invalid authorization header")
 
+    def test_market_data_and_insights_routes_require_bearer_token(self):
+        for path in (
+            "/api/quote/AAPL",
+            "/api/history/AAPL?period=1mo&interval=1d",
+            "/api/search?q=AAPL",
+            "/api/insights",
+            "/api/insights/AAPL",
+        ):
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 401)
+                self.assertEqual(response.json()["detail"], "Missing or invalid authorization header")
+
     def test_frontend_is_served_from_root(self):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)

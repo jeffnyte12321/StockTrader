@@ -1308,15 +1308,17 @@ def _run_internal_snapshot_job() -> dict:
     }
 
 
-# ─── Public routes (no auth needed) ──────────────────────────────────────────
+# ─── Market data routes (auth required) ──────────────────────────────────────
 
 @app.get("/api/quote/{symbol}")
-def get_quote(symbol: str):
+def get_quote(symbol: str, authorization: Optional[str] = Header(None)):
+    require_auth(authorization)
     return get_ticker_info(symbol)
 
 
 @app.get("/api/history/{symbol}")
-def get_history(symbol: str, period: str = "1mo", interval: str = "1d"):
+def get_history(symbol: str, period: str = "1mo", interval: str = "1d", authorization: Optional[str] = Header(None)):
+    require_auth(authorization)
     symbol = symbol.upper().strip()
     valid_periods = {"1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y"}
     valid_intervals = {"1m", "5m", "15m", "30m", "1h", "1d", "1wk", "1mo"}
@@ -1389,7 +1391,8 @@ def get_history(symbol: str, period: str = "1mo", interval: str = "1d"):
 
 
 @app.get("/api/search")
-def search_ticker(q: str):
+def search_ticker(q: str, authorization: Optional[str] = Header(None)):
+    require_auth(authorization)
     q = q.upper().strip()
     try:
         info = get_ticker_info(q)
@@ -2032,6 +2035,273 @@ def compute_macd(closes: pd.Series):
     }
 
 
+def _empty_numeric_series() -> pd.Series:
+    return pd.Series(dtype="float64")
+
+
+def _normalize_numeric_series(
+    series: Optional[pd.Series],
+    start_date: datetime.date,
+    end_date: datetime.date,
+) -> pd.Series:
+    if series is None:
+        return _empty_numeric_series()
+
+    normalized = pd.to_numeric(series, errors="coerce").dropna()
+    if normalized.empty:
+        return _empty_numeric_series()
+
+    index = pd.to_datetime(normalized.index, utc=True, errors="coerce").tz_convert(None).normalize()
+    normalized.index = index
+    normalized = normalized[~normalized.index.isna()]
+    if normalized.empty:
+        return _empty_numeric_series()
+
+    normalized = normalized.sort_index()
+    mask = (
+        (normalized.index.date >= start_date)
+        & (normalized.index.date <= end_date)
+    )
+    normalized = normalized[mask]
+    return normalized if not normalized.empty else _empty_numeric_series()
+
+
+def _price_history_series(price_map: dict[datetime.date, float]) -> pd.Series:
+    if not price_map:
+        return _empty_numeric_series()
+
+    items = sorted(
+        (pd.Timestamp(date_value), float(close))
+        for date_value, close in price_map.items()
+        if close is not None
+    )
+    if not items:
+        return _empty_numeric_series()
+
+    return pd.Series(
+        [close for _, close in items],
+        index=pd.DatetimeIndex([stamp for stamp, _ in items]),
+        dtype="float64",
+    )
+
+
+def _close_rows_from_series(symbol: str, closes: pd.Series, source: str = "yfinance") -> list[dict]:
+    rows = []
+    for idx, close in closes.items():
+        if pd.isna(idx) or pd.isna(close):
+            continue
+        rows.append({
+            "symbol": symbol,
+            "date": pd.Timestamp(idx).date().isoformat(),
+            "close": round(float(close), 6),
+            "source": source,
+        })
+    return rows
+
+
+def _download_insight_market_data(
+    symbols: list[str],
+    start_date: datetime.date,
+    end_date: datetime.date,
+) -> dict[str, dict[str, pd.Series | str]]:
+    symbols = sorted({s.strip().upper() for s in symbols if s and s.strip()})
+    if not symbols:
+        return {}
+
+    end_exclusive = end_date + datetime.timedelta(days=1)
+    yahoo_by_symbol = {symbol: _yahoo_symbol(symbol) for symbol in symbols}
+    original_by_yahoo = {yahoo: original for original, yahoo in yahoo_by_symbol.items()}
+    yahoo_symbols = sorted(set(yahoo_by_symbol.values()))
+
+    try:
+        data = yf.download(
+            tickers=yahoo_symbols,
+            start=start_date.isoformat(),
+            end=end_exclusive.isoformat(),
+            interval="1d",
+            group_by="ticker",
+            auto_adjust=False,
+            progress=False,
+            threads=True,
+        )
+    except Exception as exc:
+        print(f"[insights] yf.download failed: {exc}")
+        return {}
+
+    if data.empty:
+        return {}
+
+    result: dict[str, dict[str, pd.Series | str]] = {}
+
+    def assign(symbol: str, frame: pd.DataFrame):
+        closes = _normalize_numeric_series(frame.get("Close"), start_date, end_date)
+        volumes = _normalize_numeric_series(frame.get("Volume"), start_date, end_date)
+        if closes.empty and volumes.empty:
+            return
+        result[symbol] = {
+            "close": closes,
+            "volume": volumes,
+            "source": "yfinance",
+        }
+
+    if isinstance(data.columns, pd.MultiIndex):
+        for yahoo_symbol in yahoo_symbols:
+            try:
+                frame = data[yahoo_symbol]
+            except KeyError:
+                continue
+            if isinstance(frame, pd.Series):
+                frame = frame.to_frame()
+            symbol = original_by_yahoo.get(yahoo_symbol, yahoo_symbol)
+            assign(symbol, frame)
+    elif len(symbols) == 1:
+        assign(symbols[0], data)
+
+    return result
+
+
+def _analyze_price_series(symbol: str, closes: pd.Series, volumes: Optional[pd.Series] = None) -> Optional[dict]:
+    closes = pd.to_numeric(closes, errors="coerce").dropna().sort_index()
+    if closes.empty or len(closes) < 30:
+        return None
+
+    price = float(closes.iloc[-1])
+    prev = float(closes.iloc[-2]) if len(closes) >= 2 else price
+    change_pct = round((price - prev) / prev * 100, 2) if prev else 0.0
+
+    rsi = compute_rsi(closes)
+    macd = compute_macd(closes)
+    sma20 = float(closes.rolling(20).mean().iloc[-1])
+    sma50 = float(closes.rolling(50).mean().iloc[-1]) if len(closes) >= 50 else sma20
+
+    volumes = pd.to_numeric(volumes, errors="coerce").dropna().sort_index() if volumes is not None else _empty_numeric_series()
+    if len(volumes) >= 20:
+        vol_recent = float(volumes.tail(5).mean())
+        vol_avg = float(volumes.tail(20).mean())
+        vol_spike = round(vol_recent / vol_avg, 2) if vol_avg > 0 else 1.0
+    else:
+        vol_spike = 1.0
+
+    high_3m = float(closes.max())
+    low_3m = float(closes.min())
+    pct_from_high = round((price - high_3m) / high_3m * 100, 2) if high_3m else 0.0
+    pct_from_low = round((price - low_3m) / low_3m * 100, 2) if low_3m else 0.0
+
+    signals = []
+    score = 0
+
+    if rsi < 30:
+        signals.append("RSI oversold — potential bounce")
+        score += 2
+    elif rsi < 40:
+        signals.append("RSI approaching oversold")
+        score += 1
+    elif rsi > 70:
+        signals.append("RSI overbought — caution")
+        score -= 2
+    elif rsi > 60:
+        signals.append("RSI elevated")
+        score -= 1
+
+    if macd["bullish"] and macd["histogram"] > 0:
+        signals.append("MACD bullish crossover")
+        score += 1
+    elif not macd["bullish"]:
+        signals.append("MACD bearish")
+        score -= 1
+
+    if price > sma20:
+        signals.append("Trading above 20-day SMA")
+        score += 1
+    else:
+        signals.append("Trading below 20-day SMA")
+        score -= 1
+
+    if price > sma50:
+        score += 1
+    else:
+        score -= 1
+
+    if vol_spike > 1.5:
+        signals.append(f"Volume surge ({vol_spike}x avg)")
+
+    if pct_from_high > -5:
+        signals.append("Near 3-month high")
+    elif pct_from_low < 10:
+        signals.append("Near 3-month low — potential value")
+        score += 1
+
+    if score >= 3:
+        action = "Strong Buy"
+        action_color = "strong-buy"
+    elif score >= 1:
+        action = "Buy"
+        action_color = "buy"
+    elif score <= -3:
+        action = "Strong Sell"
+        action_color = "strong-sell"
+    elif score <= -1:
+        action = "Sell"
+        action_color = "sell"
+    else:
+        action = "Hold"
+        action_color = "hold"
+
+    return {
+        "symbol": symbol,
+        "price": round(price, 2),
+        "change_pct": change_pct,
+        "rsi": rsi,
+        "macd": macd,
+        "sma20": round(sma20, 2),
+        "sma50": round(sma50, 2),
+        "vol_spike": vol_spike,
+        "pct_from_high": pct_from_high,
+        "pct_from_low": pct_from_low,
+        "signals": signals,
+        "action": action,
+        "action_color": action_color,
+        "score": score,
+    }
+
+
+def _analyze_stocks_batch(token: str, symbols: list[str]) -> list[dict]:
+    symbols = [s.strip().upper() for s in symbols if s and s.strip()]
+    if not symbols:
+        return []
+
+    end_date = datetime.date.today()
+    start_date = end_date - datetime.timedelta(days=120)
+    cached_closes = _get_cached_price_history(token, symbols, start_date, end_date)
+    downloaded = _download_insight_market_data(symbols, start_date, end_date)
+
+    uncached_rows = []
+    insights = []
+    for symbol in symbols:
+        cached_series = _price_history_series(cached_closes.get(symbol, {}))
+        downloaded_payload = downloaded.get(symbol, {})
+        downloaded_closes = downloaded_payload.get("close", _empty_numeric_series())
+        if isinstance(downloaded_closes, pd.Series) and not downloaded_closes.empty:
+            closes = downloaded_closes.combine_first(cached_series).sort_index()
+            if not cached_closes.get(symbol):
+                uncached_rows.extend(_close_rows_from_series(symbol, downloaded_closes, downloaded_payload.get("source", "yfinance")))
+        else:
+            closes = cached_series
+
+        volumes = downloaded_payload.get("volume", _empty_numeric_series())
+        insight = _analyze_price_series(symbol, closes, volumes if isinstance(volumes, pd.Series) else _empty_numeric_series())
+        if insight:
+            insights.append(insight)
+
+    if uncached_rows and db.SUPABASE_SERVICE_ROLE_KEY:
+        try:
+            db.upsert_price_history_rows(uncached_rows, use_service_role=True)
+        except Exception as exc:
+            print(f"[insights] cache upsert failed: {exc}")
+
+    return insights
+
+
 def analyze_stock(symbol: str) -> dict:
     try:
         tk = yf.Ticker(_yahoo_symbol(symbol))
@@ -2039,108 +2309,14 @@ def analyze_stock(symbol: str) -> dict:
         if hist.empty or len(hist) < 30:
             return None
 
-        closes = hist["Close"]
-        volumes = hist["Volume"]
-        price = float(closes.iloc[-1])
-        prev = float(closes.iloc[-2])
-        change_pct = round((price - prev) / prev * 100, 2)
-
-        rsi = compute_rsi(closes)
-        macd = compute_macd(closes)
-        sma20 = float(closes.rolling(20).mean().iloc[-1])
-        sma50 = float(closes.rolling(50).mean().iloc[-1]) if len(closes) >= 50 else sma20
-
-        vol_recent = float(volumes.tail(5).mean())
-        vol_avg = float(volumes.tail(20).mean())
-        vol_spike = round(vol_recent / vol_avg, 2) if vol_avg > 0 else 1.0
-
-        high_3m = float(closes.max())
-        low_3m = float(closes.min())
-        pct_from_high = round((price - high_3m) / high_3m * 100, 2)
-        pct_from_low = round((price - low_3m) / low_3m * 100, 2)
-
-        signals = []
-        score = 0
-
-        if rsi < 30:
-            signals.append("RSI oversold — potential bounce")
-            score += 2
-        elif rsi < 40:
-            signals.append("RSI approaching oversold")
-            score += 1
-        elif rsi > 70:
-            signals.append("RSI overbought — caution")
-            score -= 2
-        elif rsi > 60:
-            signals.append("RSI elevated")
-            score -= 1
-
-        if macd["bullish"] and macd["histogram"] > 0:
-            signals.append("MACD bullish crossover")
-            score += 1
-        elif not macd["bullish"]:
-            signals.append("MACD bearish")
-            score -= 1
-
-        if price > sma20:
-            signals.append("Trading above 20-day SMA")
-            score += 1
-        else:
-            signals.append("Trading below 20-day SMA")
-            score -= 1
-
-        if price > sma50:
-            score += 1
-        else:
-            score -= 1
-
-        if vol_spike > 1.5:
-            signals.append(f"Volume surge ({vol_spike}x avg)")
-
-        if pct_from_high > -5:
-            signals.append("Near 3-month high")
-        elif pct_from_low < 10:
-            signals.append("Near 3-month low — potential value")
-            score += 1
-
-        if score >= 3:
-            action = "Strong Buy"
-            action_color = "strong-buy"
-        elif score >= 1:
-            action = "Buy"
-            action_color = "buy"
-        elif score <= -3:
-            action = "Strong Sell"
-            action_color = "strong-sell"
-        elif score <= -1:
-            action = "Sell"
-            action_color = "sell"
-        else:
-            action = "Hold"
-            action_color = "hold"
-
-        return {
-            "symbol": symbol,
-            "price": round(price, 2),
-            "change_pct": change_pct,
-            "rsi": rsi,
-            "macd": macd,
-            "sma20": round(sma20, 2),
-            "sma50": round(sma50, 2),
-            "vol_spike": vol_spike,
-            "pct_from_high": pct_from_high,
-            "pct_from_low": pct_from_low,
-            "signals": signals,
-            "action": action,
-            "action_color": action_color,
-            "score": score,
-        }
+        return _analyze_price_series(symbol, hist["Close"], hist["Volume"])
     except Exception:
         return None
 
 
 @app.get("/api/insights")
-def get_insights(symbols: str = ""):
+def get_insights(symbols: str = "", authorization: Optional[str] = Header(None)):
+    token, _ = require_auth(authorization)
     today = datetime.date.today()
     if today.weekday() >= 5:
         return {
@@ -2155,11 +2331,7 @@ def get_insights(symbols: str = ""):
     else:
         tickers = WATCHLIST
 
-    insights = []
-    for sym in tickers:
-        result = analyze_stock(sym)
-        if result:
-            insights.append(result)
+    insights = _analyze_stocks_batch(token, tickers)
 
     order = {"Strong Buy": 0, "Buy": 1, "Hold": 2, "Sell": 3, "Strong Sell": 4}
     insights.sort(key=lambda x: order.get(x["action"], 2))
@@ -2183,9 +2355,11 @@ def get_insights(symbols: str = ""):
 
 
 @app.get("/api/insights/{symbol}")
-def get_single_insight(symbol: str):
+def get_single_insight(symbol: str, authorization: Optional[str] = Header(None)):
+    token, _ = require_auth(authorization)
     symbol = symbol.upper().strip()
-    result = analyze_stock(symbol)
+    batched_results = _analyze_stocks_batch(token, [symbol])
+    result = batched_results[0] if batched_results else analyze_stock(symbol)
     if not result:
         raise HTTPException(status_code=404, detail=f"Could not analyze {symbol}")
     return result
