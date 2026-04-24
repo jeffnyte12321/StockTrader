@@ -9,7 +9,7 @@ from typing import Optional
 import uuid
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import yfinance as yf
@@ -27,6 +27,7 @@ from snaptrade_api import snaptrade, SnapTradeAPIError
 ALPHAVANTAGE_API_KEY = os.getenv("ALPHAVANTAGE_API_KEY", "").strip()
 STOOQ_API_KEY = os.getenv("STOOQ_API_KEY", "").strip()
 INTERNAL_SNAPSHOT_TOKEN = os.getenv("INTERNAL_SNAPSHOT_TOKEN", "").strip()
+CRON_FAILURE_WEBHOOK_URL = os.getenv("CRON_FAILURE_WEBHOOK_URL", "").strip()
 
 
 def _configure_logging() -> logging.Logger:
@@ -88,9 +89,47 @@ def require_auth(authorization: Optional[str]) -> tuple[str, str]:
 def require_internal_auth(authorization: Optional[str]):
     expected = INTERNAL_SNAPSHOT_TOKEN or db.SUPABASE_SERVICE_ROLE_KEY
     if not expected:
-        raise HTTPException(status_code=503, detail="Internal snapshot auth is not configured.")
+        raise HTTPException(status_code=503, detail="Internal job auth is not configured.")
     if not authorization or authorization != f"Bearer {expected}":
         raise HTTPException(status_code=401, detail="Missing or invalid internal authorization header")
+
+
+def _notify_cron_failure(job_name: str, result: dict):
+    if not CRON_FAILURE_WEBHOOK_URL:
+        return
+
+    payload = {
+        "job": job_name,
+        "failed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "result": result,
+    }
+    try:
+        response = requests.post(CRON_FAILURE_WEBHOOK_URL, json=payload, timeout=15)
+        response.raise_for_status()
+    except Exception:
+        logger.warning(
+            "[internal-job] failure webhook delivery failed for %s",
+            job_name,
+            exc_info=True,
+        )
+
+
+def _internal_job_response(job_name: str, result: dict, failure_count: int):
+    payload = dict(result)
+    payload["job"] = job_name
+    payload["ok"] = failure_count == 0
+    payload["failure_count"] = failure_count
+    if failure_count:
+        logger.error(
+            "[internal-job] %s completed with %s failures",
+            job_name,
+            failure_count,
+        )
+        _notify_cron_failure(job_name, payload)
+        return JSONResponse(status_code=500, content=payload)
+
+    logger.info("[internal-job] %s completed successfully", job_name)
+    return payload
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
@@ -1311,6 +1350,7 @@ def _run_internal_snapshot_job() -> dict:
     symbols = set()
     snapshots_written = 0
     users_failed = []
+    price_refresh_failed = None
 
     for user_id in user_ids:
         try:
@@ -1336,10 +1376,18 @@ def _run_internal_snapshot_job() -> dict:
 
     price_rows = []
     if symbols:
-        today = datetime.date.today()
-        price_rows = _download_price_history_rows(sorted(symbols), today - datetime.timedelta(days=10), today)
-        if price_rows:
-            db.upsert_price_history_rows(price_rows, use_service_role=True)
+        try:
+            today = datetime.date.today()
+            price_rows = _download_price_history_rows(sorted(symbols), today - datetime.timedelta(days=10), today)
+            if price_rows:
+                db.upsert_price_history_rows(price_rows, use_service_role=True)
+        except Exception as exc:
+            price_refresh_failed = str(exc)
+            logger.error(
+                "[snapshot-cron] price refresh failed for %s symbols",
+                len(symbols),
+                exc_info=True,
+            )
 
     return {
         "snapshot_date": snapshot_date,
@@ -1348,7 +1396,78 @@ def _run_internal_snapshot_job() -> dict:
         "symbols_seen": len(symbols),
         "price_rows_written": len(price_rows),
         "users_failed": users_failed,
+        "price_refresh_failed": price_refresh_failed,
     }
+
+
+def _check_alert_rows(alerts: list[dict], update_alert_triggered) -> dict:
+    active = [alert for alert in alerts if not alert.get("triggered")]
+    symbols = sorted({
+        str(alert.get("symbol") or "").upper()
+        for alert in active
+        if alert.get("symbol")
+    })
+    prices = {}
+    symbol_failures = []
+    for symbol in symbols:
+        try:
+            prices[symbol] = get_ticker_info(symbol)["price"]
+        except Exception as exc:
+            symbol_failures.append({"symbol": symbol, "detail": str(exc)})
+
+    triggered = []
+    alerts_failed = []
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    for alert in active:
+        symbol = str(alert.get("symbol") or "").upper()
+        price = prices.get(symbol)
+        if price is None:
+            continue
+        hit = (
+            alert["condition"] == "above" and price >= alert["target_price"]
+        ) or (
+            alert["condition"] == "below" and price <= alert["target_price"]
+        )
+        if not hit:
+            continue
+        try:
+            update_alert_triggered(alert["id"], price, now)
+        except Exception as exc:
+            alerts_failed.append({"id": alert["id"], "symbol": symbol, "detail": str(exc)})
+            continue
+
+        alert["triggered"] = True
+        alert["triggered_price"] = price
+        alert["triggered_at"] = now
+        triggered.append(alert)
+
+    return {
+        "checked": len(active),
+        "symbols_checked": len(symbols),
+        "prices": prices,
+        "triggered": [{
+            "id": alert["id"],
+            "symbol": alert["symbol"],
+            "condition": alert["condition"],
+            "target_price": alert["target_price"],
+            "triggered_price": alert["triggered_price"],
+        } for alert in triggered],
+        "triggered_count": len(triggered),
+        "symbol_failures": symbol_failures,
+        "alerts_failed": alerts_failed,
+    }
+
+
+def _run_internal_alert_job() -> dict:
+    alerts = db.service_get_active_alerts()
+    result = _check_alert_rows(alerts, db.service_update_alert_triggered)
+    result["users_seen"] = len({
+        alert.get("user_id")
+        for alert in alerts
+        if alert.get("user_id")
+    })
+    result.pop("prices", None)
+    return result
 
 
 # ─── Market data routes (auth required) ──────────────────────────────────────
@@ -1447,7 +1566,19 @@ def search_ticker(q: str, authorization: Optional[str] = Header(None)):
 @app.post("/api/internal/snapshot")
 def run_internal_snapshot(authorization: Optional[str] = Header(None)):
     require_internal_auth(authorization)
-    return _run_internal_snapshot_job()
+    result = _run_internal_snapshot_job()
+    failure_count = len(result.get("users_failed") or [])
+    if result.get("price_refresh_failed"):
+        failure_count += 1
+    return _internal_job_response("snapshot", result, failure_count)
+
+
+@app.post("/api/internal/alerts/check")
+def run_internal_alert_check(authorization: Optional[str] = Header(None)):
+    require_internal_auth(authorization)
+    result = _run_internal_alert_job()
+    failure_count = len(result.get("symbol_failures") or []) + len(result.get("alerts_failed") or [])
+    return _internal_job_response("alerts-check", result, failure_count)
 
 
 # ─── Auth routes ──────────────────────────────────────────────────────────────
@@ -1814,41 +1945,15 @@ def delete_alert(alert_id: str, authorization: Optional[str] = Header(None)):
 def check_alerts(authorization: Optional[str] = Header(None)):
     token, user_id = require_auth(authorization)
     alerts = db.get_alerts(token)
-    active = [a for a in alerts if not a["triggered"]]
-    symbols = list({a["symbol"] for a in active})
-    prices = {}
-    for sym in symbols:
-        try:
-            prices[sym] = get_ticker_info(sym)["price"]
-        except Exception:
-            pass
-
-    triggered = []
-    now = datetime.datetime.utcnow().isoformat()
-    for alert in active:
-        price = prices.get(alert["symbol"])
-        if price is None:
-            continue
-        hit = (alert["condition"] == "above" and price >= alert["target_price"]) or \
-              (alert["condition"] == "below" and price <= alert["target_price"])
-        if hit:
-            db.update_alert_triggered(token, alert["id"], price, now)
-            alert["triggered"] = True
-            alert["triggered_price"] = price
-            alert["triggered_at"] = now
-            triggered.append(alert)
-
-    return {
-        "checked": len(active),
-        "triggered": [{
-            "id": a["id"],
-            "symbol": a["symbol"],
-            "condition": a["condition"],
-            "target_price": a["target_price"],
-            "triggered_price": a["triggered_price"],
-        } for a in triggered],
-        "prices": prices,
-    }
+    return _check_alert_rows(
+        alerts,
+        lambda alert_id, price, triggered_at: db.update_alert_triggered(
+            token,
+            alert_id,
+            price,
+            triggered_at,
+        ),
+    )
 
 
 # ─── Journal, theses, events, and snapshots ─────────────────────────────────

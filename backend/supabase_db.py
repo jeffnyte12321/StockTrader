@@ -37,7 +37,7 @@ def _pg_service() -> SyncPostgrestClient:
     """Service-role PostgREST client — bypasses RLS. Raises if key missing."""
     if not SUPABASE_SERVICE_ROLE_KEY:
         raise RuntimeError(
-            "SUPABASE_SERVICE_ROLE_KEY is not set. Required for internal snapshot cron."
+            "SUPABASE_SERVICE_ROLE_KEY is not set. Required for internal cron jobs."
         )
     return SyncPostgrestClient(
         base_url=REST_URL,
@@ -501,6 +501,27 @@ def service_get_brokerage_accounts(user_id: str):
     pg = _pg_service()
     resp = pg.from_("brokerage_accounts").select("*").eq("user_id", user_id).execute()
     return resp.data or []
+
+
+def service_get_active_alerts():
+    pg = _pg_service()
+    resp = (
+        pg.from_("alerts")
+        .select("*")
+        .eq("triggered", False)
+        .order("created_at")
+        .execute()
+    )
+    return resp.data or []
+
+
+def service_update_alert_triggered(alert_id: str, triggered_price: float, triggered_at: str):
+    pg = _pg_service()
+    pg.from_("alerts").update({
+        "triggered": True,
+        "triggered_price": triggered_price,
+        "triggered_at": triggered_at,
+    }).eq("id", alert_id).execute()
 
 
 def service_upsert_snapshot(user_id: str, snapshot_date: str, total_value: float,

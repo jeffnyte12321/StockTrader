@@ -19,6 +19,7 @@ class ApiSmokeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         paths = response.json()["paths"]
         self.assertIn("/api/internal/snapshot", paths)
+        self.assertIn("/api/internal/alerts/check", paths)
         self.assertIn("/api/brokerage/sync", paths)
         self.assertIn("/api/portfolio/equity-curve", paths)
         self.assertIn("/api/portfolio/snapshots", paths)

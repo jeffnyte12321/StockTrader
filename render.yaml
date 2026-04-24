@@ -30,6 +30,8 @@ services:
         sync: false
       - key: ALLOWED_ORIGINS
         sync: false
+      - key: CRON_FAILURE_WEBHOOK_URL
+        sync: false
   - type: cron
     name: northstar-daily-snapshot
     runtime: python
@@ -38,6 +40,21 @@ services:
     startCommand: >-
       python -c "import os, requests; base=os.environ['NORTHSTAR_BASE_URL'].rstrip('/'); token=os.environ['INTERNAL_SNAPSHOT_TOKEN']; r=requests.post(base + '/api/internal/snapshot', headers={'Authorization': 'Bearer ' + token}, timeout=180); print(r.status_code, r.text); r.raise_for_status()"
     schedule: "30 21 * * 1-5"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.4
+      - key: NORTHSTAR_BASE_URL
+        sync: false
+      - key: INTERNAL_SNAPSHOT_TOKEN
+        sync: false
+  - type: cron
+    name: northstar-alert-checks
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: >-
+      python -c "import os, requests; base=os.environ['NORTHSTAR_BASE_URL'].rstrip('/'); token=os.environ['INTERNAL_SNAPSHOT_TOKEN']; r=requests.post(base + '/api/internal/alerts/check', headers={'Authorization': 'Bearer ' + token}, timeout=180); print(r.status_code, r.text); r.raise_for_status()"
+    schedule: "*/15 13-21 * * 1-5"
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.4

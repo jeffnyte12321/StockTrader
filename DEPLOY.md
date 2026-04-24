@@ -10,6 +10,7 @@ This app is set up to deploy as one Python web service on Render.
 - `backend/supabase_db.py` reads `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` from environment variables
 - `backend/snaptrade_api.py` reads the SnapTrade credentials from environment variables
 - A Render cron service can hit `POST /api/internal/snapshot` after market close
+- A second Render cron service can hit `POST /api/internal/alerts/check` during market hours
 - `.env.example` shows the required variables
 
 ## Render steps
@@ -32,6 +33,7 @@ This app is set up to deploy as one Python web service on Render.
    - `INTERNAL_SNAPSHOT_TOKEN`
    - `NORTHSTAR_BASE_URL`
    - `ALLOWED_ORIGINS`
+   - `CRON_FAILURE_WEBHOOK_URL` (optional)
 5. Deploy the service.
 6. After the service is live, add your custom domain in Render.
 7. Update your DNS records at your domain registrar to the values Render gives you.
@@ -45,6 +47,9 @@ This app is set up to deploy as one Python web service on Render.
 - Run the latest `supabase/schema.sql` before using the brokerage sync endpoints. The historical graph needs `price_history` and `transactions`.
 - The cron job in `render.yaml` is scheduled for `30 21 * * 1-5`; Render schedules cron in UTC, so this is 4:30pm ET during standard time and 5:30pm ET during daylight time.
 - `POST /api/internal/snapshot` accepts only `Authorization: Bearer $INTERNAL_SNAPSHOT_TOKEN` and writes daily portfolio snapshots plus cached daily closes.
+- `POST /api/internal/alerts/check` accepts the same internal bearer token and evaluates all untriggered alerts in the background.
+- Internal job endpoints now return HTTP `500` when they hit partial failures, so Render cron marks the run as failed instead of hiding it inside a `200` response.
+- `CRON_FAILURE_WEBHOOK_URL`, when set on the web service, receives a JSON payload whenever an internal cron job finishes with failures.
 - `ALLOWED_ORIGINS` is comma-separated. Include your Render/custom domain if a separate frontend origin ever calls the API.
 - SnapTrade sync flow:
   - `POST /api/brokerage/connect` returns the Connection Portal URL.
