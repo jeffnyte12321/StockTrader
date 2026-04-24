@@ -69,6 +69,14 @@ class ApiSmokeTests(unittest.TestCase):
         self.assertEqual(main._yahoo_symbol("xlm"), "XLM-USD")
         self.assertEqual(main._yahoo_symbol("AAPL"), "AAPL")
 
+    def test_backend_uses_logging_instead_of_print(self):
+        for relative_path in (
+            ROOT / "backend" / "main.py",
+            ROOT / "backend" / "routers" / "auth.py",
+        ):
+            with self.subTest(path=str(relative_path)):
+                self.assertNotIn("print(", relative_path.read_text())
+
 
 if __name__ == "__main__":
     unittest.main()

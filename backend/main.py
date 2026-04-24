@@ -3,6 +3,7 @@ from collections import defaultdict
 import csv
 import datetime
 import io
+import logging
 import math
 from typing import Optional
 import uuid
@@ -25,6 +26,22 @@ from snaptrade_api import snaptrade, SnapTradeAPIError
 ALPHAVANTAGE_API_KEY = os.getenv("ALPHAVANTAGE_API_KEY", "").strip()
 STOOQ_API_KEY = os.getenv("STOOQ_API_KEY", "").strip()
 INTERNAL_SNAPSHOT_TOKEN = os.getenv("INTERNAL_SNAPSHOT_TOKEN", "").strip()
+
+
+def _configure_logging() -> logging.Logger:
+    level_name = os.getenv("LOG_LEVEL", "INFO").strip().upper()
+    level = getattr(logging, level_name, logging.INFO)
+    logger = logging.getLogger("northstar.api")
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+        logger.addHandler(handler)
+    logger.setLevel(level)
+    logger.propagate = False
+    return logger
+
+
+logger = _configure_logging()
 
 
 def _allowed_origins() -> list[str]:
@@ -550,7 +567,13 @@ def _download_price_history_rows(symbols: list[str], start_date: datetime.date, 
             threads=True,
         )
     except Exception as exc:
-        print(f"[price-history] yf.download failed: {exc}")
+        logger.warning(
+            "[price-history] yf.download failed for %s symbols between %s and %s",
+            len(yahoo_symbols),
+            start_date.isoformat(),
+            end_date.isoformat(),
+            exc_info=True,
+        )
         data = pd.DataFrame()
 
     def append_series(symbol: str, closes: pd.Series, source: str):
@@ -629,7 +652,13 @@ def _get_cached_price_history(
             use_service_role=use_service_role,
         )
     except Exception as exc:
-        print(f"[price-history] database read failed: {exc}")
+        logger.warning(
+            "[price-history] database read failed for %s symbols between %s and %s",
+            len(symbols),
+            start_date.isoformat(),
+            end_date.isoformat(),
+            exc_info=True,
+        )
         rows = []
     grouped = _price_rows_by_symbol(rows)
 
@@ -642,7 +671,11 @@ def _get_cached_price_history(
                 try:
                     db.upsert_price_history_rows(fetched, use_service_role=True)
                 except Exception as exc:
-                    print(f"[price-history] database upsert failed: {exc}")
+                    logger.warning(
+                        "[price-history] database upsert failed for %s rows",
+                        len(fetched),
+                        exc_info=True,
+                    )
             grouped = _price_rows_by_symbol(rows + fetched)
     return grouped
 
@@ -1119,7 +1152,11 @@ def _transactions_for_period(
     try:
         return db.get_transactions(token, end_date=end_value)
     except Exception as exc:
-        print(f"[transactions] database read failed: {exc}")
+        logger.warning(
+            "[transactions] database read failed through %s",
+            end_value,
+            exc_info=True,
+        )
         return []
 
 
@@ -1257,7 +1294,12 @@ def _attach_return_metrics(token: str, user_id: str, portfolio: dict, range_key:
         portfolio.update(_return_metrics_from_curve(curve))
         portfolio["returns_range"] = range_key.upper()
     except Exception as exc:
-        print(f"[returns] failed to compute return metrics: {exc}")
+        logger.warning(
+            "[returns] failed to compute return metrics for user %s range %s",
+            user_id,
+            range_key.upper(),
+            exc_info=True,
+        )
         portfolio.update({"twr_pct": None, "irr_pct": None, "returns_range": range_key.upper()})
     return portfolio
 
@@ -1435,7 +1477,11 @@ def signup(req: AuthRequest):
             try:
                 db.ensure_profile(token, str(resp.user.id))
             except Exception as profile_err:
-                print(f"Profile creation note: {profile_err}")
+                logger.warning(
+                    "[auth] profile creation failed after signup for user %s",
+                    resp.user.id,
+                    exc_info=True,
+                )
             return {
                 "user": {"id": str(resp.user.id), "email": resp.user.email},
                 "session": {
@@ -1581,7 +1627,11 @@ def sync_brokerage_data(req: BrokerageSyncRequest, authorization: Optional[str] 
                 sector_breakdown={},
             )
         except Exception as exc:
-            print(f"[brokerage-sync] snapshot save failed: {exc}")
+            logger.warning(
+                "[brokerage-sync] snapshot save failed for user %s",
+                user_id,
+                exc_info=True,
+            )
     return {"sync": summary, "portfolio": portfolio}
 
 
@@ -1942,7 +1992,13 @@ def get_portfolio_equity_curve(
         curve.pop("transactions", None)
         return curve
     except Exception as exc:
-        print(f"[equity-curve] failed: {exc}")
+        logger.error(
+            "[equity-curve] failed for user %s range %s benchmark %s",
+            user_id,
+            range.upper(),
+            benchmark,
+            exc_info=True,
+        )
         return {
             "range": range.upper(),
             "points": [],
@@ -2125,7 +2181,13 @@ def _download_insight_market_data(
             threads=True,
         )
     except Exception as exc:
-        print(f"[insights] yf.download failed: {exc}")
+        logger.warning(
+            "[insights] yf.download failed for %s symbols between %s and %s",
+            len(yahoo_symbols),
+            start_date.isoformat(),
+            end_date.isoformat(),
+            exc_info=True,
+        )
         return {}
 
     if data.empty:
@@ -2297,7 +2359,11 @@ def _analyze_stocks_batch(token: str, symbols: list[str]) -> list[dict]:
         try:
             db.upsert_price_history_rows(uncached_rows, use_service_role=True)
         except Exception as exc:
-            print(f"[insights] cache upsert failed: {exc}")
+            logger.warning(
+                "[insights] cache upsert failed for %s rows",
+                len(uncached_rows),
+                exc_info=True,
+            )
 
     return insights
 

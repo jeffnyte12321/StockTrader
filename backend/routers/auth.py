@@ -1,4 +1,5 @@
 """Auth routes: signup, login, me."""
+import logging
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
@@ -7,6 +8,7 @@ from db.client import supabase
 from db.profiles import ensure_profile
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+logger = logging.getLogger("northstar.api.auth")
 
 
 class AuthRequest(BaseModel):
@@ -23,7 +25,11 @@ def signup(req: AuthRequest):
             try:
                 ensure_profile(token, str(resp.user.id))
             except Exception as e:
-                print(f"Profile creation note: {e}")
+                logger.warning(
+                    "[auth] profile creation failed after signup for user %s",
+                    resp.user.id,
+                    exc_info=True,
+                )
             return {
                 "user": {"id": str(resp.user.id), "email": resp.user.email},
                 "session": {
