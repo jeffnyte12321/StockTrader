@@ -1973,6 +1973,14 @@
       font-size: 15px;
       font-weight: 600;
     }
+    .pnl-badge.up {
+      background: var(--ns-green-bg);
+      color: var(--ns-green);
+    }
+    .pnl-badge.down {
+      background: var(--ns-red-bg);
+      color: var(--ns-red);
+    }
     .portfolio-chart-wrap {
       position: absolute;
       left: 20px;
@@ -3587,7 +3595,7 @@ function Dashboard({ toast, onNavigate, onOpenPosition, viewMode = "simple" }) {
           <div className="tile-label">Total portfolio value</div>
           <div className="portfolio-value" aria-label={fmt$(totalValue)}>{fmt$(totalValue)}</div>
           <div className="portfolio-pnl-row">
-            <span className="pnl-badge">
+            <span className={`pnl-badge ${pnlPositive ? "up" : "down"}`}>
               <span aria-hidden="true">{pnlArrow}</span>
               <span className="tabular">{pnlPrefix}{fmt$(Math.abs(portfolio.total_pnl || 0))}</span>
               <span style={{ opacity: 0.75 }}>({fmtPct(portfolio.total_pnl_pct || 0)})</span>
@@ -3631,7 +3639,7 @@ function Dashboard({ toast, onNavigate, onOpenPosition, viewMode = "simple" }) {
               display: "inline-flex",
               alignItems: "center",
               gap: 6,
-              color: rangeDelta >= 0 ? "#4ade80" : "#f87171",
+              color: rangeDelta >= 0 ? "var(--ns-green)" : "var(--ns-red)",
               fontSize: 12,
               fontWeight: 700,
             }}>
